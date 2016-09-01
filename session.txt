@@ -1,0 +1,14 @@
+load airfoil_thread_1.txt
+oper
+visc
+200000
+0
+iter
+100
+pacc
+output_thread_1.txt
+
+aseq 0 12 0.5
+
+quit
+
