@@ -1,5 +1,5 @@
 #Run in Python 3.5
-#airfoil_gen(0.04,0.6,0.2,15)
+"Parallel Genetic Algorithm for airfoil optimization"
 import numpy as np
 import csv
 import os
@@ -10,6 +10,8 @@ import subprocess as sp
 import threading
 import queue
 import time
+import psutil
+import sys
 
 os.chdir(r'C:\Users\Aniru_000\Desktop\TD-1\Airfoil\s1223\airfoil\Python Code\tempfiles')
 
@@ -31,15 +33,16 @@ SECTION_2_ELEMENTS=20
 SECTION_3_ELEMENTS=20
 
 REYNOLDS_NO=200000
-ALPHA_OPT=0
+ALPHA_OPT=3
 
 CHROMOSOME_SIZE=4
-MAX_GEN=10
+MAX_GEN=1
 POP_SIZE=10
 CXPB=0.95
 MXPB=0.05
-SELECTION_k=2
-NUM_THREADS=3
+SELECTION_k=3
+NUM_THREADS=4
+THREAD_LIST=[]
 
 OPT_TYPE='MAX'                            #MAX or MIN
 q=queue.Queue()
@@ -124,7 +127,7 @@ def airfoil_gen (m,p,t,a,thread_name,id):
     
     x=np.arange(0,0.03,(0.03-0)/(0.5*SECTION_1_ELEMENTS))
     x=np.append(x,np.arange(0.03,0.1,(0.1-0.03)/(0.5*SECTION_2_ELEMENTS)))
-    x=np.append(x,np.arange(0.1,1.02,(1.001-0.1)/(0.5*SECTION_3_ELEMENTS)))
+    x=np.append(x,np.arange(0.1,1.02,(1.001-0.1)/(0.5*SECTION_3_ELEMENTS)))           #1.02
     upper=np.array([])
     lower=np.array([])
     
@@ -133,8 +136,8 @@ def airfoil_gen (m,p,t,a,thread_name,id):
             yc=(m/(p**2))*((2*p*x[i])-(x[i]**2))
             dyc=((2*m)/p**2)*(p-x[i])
         else:
-            a_temp=np.array([[0,1,1,1],[1,p,p**2,p**3],[0,1,2*p,3*p*p],[0,1,2,3]])
-            b_temp=np.array([0,m,0,-np.tan(-a/57.29)])
+            a_temp=np.array([[1,1,1,1],[1,p,p**2,p**3],[0,1,2*p,3*p*p],[0,1,2,3]])
+            b_temp=np.array([0,m,0,np.tan(-a/57.29)])
             b=np.linalg.solve(a_temp,b_temp)
             yc=b[0]+(b[1]*x[i])+(b[2]*(x[i]**2))+(b[3]*(x[i]**3))
             dyc=b[1]+(2*b[2]*x[i])+(3*b[3]*(x[i]**2))
@@ -145,9 +148,8 @@ def airfoil_gen (m,p,t,a,thread_name,id):
         yu=yc+(yt*np.cos(theta))
         xl=x[i]+(yt*np.sin(theta))
         yl=yc-(yt*np.cos(theta))
-        yl=yc-(yt*np.cos(theta))
         upper=np.append(upper,np.array([xu,yu]))
-        lower=np.append(lower,[xl,yl])
+        lower=np.append(lower,np.array([xl,yl]))
 
     airfoil_dat=open("airfoil_"+str(thread_name)+'_'+str(id)+".dat", 'w')
     airfoil_dat.write("TEST AIRFOIL\n\n")
@@ -156,15 +158,26 @@ def airfoil_gen (m,p,t,a,thread_name,id):
     for i in range(0,len(lower),2):
         airfoil_dat.write("%f \t %f\n" %(lower[i], lower[i+1]))
         
+def kill(proc_pid):
+    process = psutil.Process(proc_pid)
+    for proc in process.children(recursive=True):
+        try:
+            proc.kill()
+        except psutil.NoSuchProcess:
+            continue
+    try:        
+        process.kill()
+    except psutil.NoSuchProcess:
+        pass
+        
 def run_xfoil(thread_name,id) :
     cmd='xfoil.exe < session_'+str(thread_name)+'_'+str(id)+'.txt'
-    p1=sp.Popen(cmd, shell=True, stdout=sp.PIPE, stderr=sp.PIPE)
-    try:
-        out,errs=p1.communicate(timeout=10)
+    p1=sp.Popen(cmd, shell=True,creationflags=sp.CREATE_NEW_CONSOLE)
+    try:     
+        p1.wait(timeout=15)
         errorCode=0
     except sp.TimeoutExpired:
-        p1.terminate()
-        p1.kill()
+        kill(p1.pid)
         errorCode=1
     return(errorCode)
 
@@ -238,38 +251,57 @@ def fitness_function(individual,thread_name):
                     flag=1
                 except KeyError:
                     flag=0
-    # while True:
-        # try:    
-            # os.remove('airfoil_'+str(thread_name)+'.dat')
-            # os.remove('output_'+str(thread_name)+'.txt')
-            # os.remove('session_'+str(thread_name)+'.txt')
-            # break
-        # except PermissionError:
-            # print("Could not delete files")
+
     return -np.inf if flag==0 else cl/cd
+
+def printProgress (iteration, total, prefix = '', suffix = '', decimals = 1, barLength = 100):
+    """
+    Call in a loop to create terminal progress bar
+    @params:
+        iteration   - Required  : current iteration (Int)
+        total       - Required  : total iterations (Int)
+        prefix      - Optional  : prefix string (Str)
+        suffix      - Optional  : suffix string (Str)
+        decimals    - Optional  : positive number of decimals in percent complete (Int)
+        barLength   - Optional  : character length of bar (Int)
+    """
+    formatStr       = "{0:." + str(decimals) + "f}"
+    percents        = formatStr.format(100 * (iteration / float(total)))
+    filledLength    = int(round(barLength * iteration / float(total)))
+    bar             = '#' * filledLength + '-' * (barLength - filledLength)
+    sys.stdout.write('\r%s |%s| %s%s %s' % (prefix, bar, percents, '%', suffix))    #sys.stdout.write
+    sys.stdout.flush()
+    if iteration == total:
+        sys.stdout.write('\n')
+        sys.stdout.flush()
 
 def get_task(thread_name):
     while True:
         individual=q.get()
-        #print("Getting next individual, Thread:" +thread_name)
-        individual.evaluate(thread_name)
-        #print(individual.fitness)
-        
+        individual.evaluate(thread_name)       
         q.task_done()
         # if(q.qsize()%10==0):
             # print(str(q.qsize())+" remaining")
+            
+def create_threads():
+    for i in range(NUM_THREADS):
+        THREAD_LIST.append(threading.Thread(target=get_task, args=('Thread_'+str(i),), name='Thread_'+str(i)))
+        THREAD_LIST[i].setDaemon(True)    
+        THREAD_LIST[i].start()
     
 def parallel_computing(ga_object):
     
     for ind in ga_object.population:
         q.put(ind)
-    
-    thread_list=[]
-    for i in range(NUM_THREADS):
-        thread_list.append(threading.Thread(target=get_task, args=('Thread_'+str(i),), name='Thread_'+str(i)))
-        thread_list[i].setDaemon(True)    
-        thread_list[i].start()
-        
+      
+    i=0
+    l=q.qsize()
+    printProgress(i, l, prefix = 'Evaluating:', suffix = 'Complete', barLength = 50)
+    while q.qsize()>0:
+        i=l-q.qsize()
+        printProgress(i, l, prefix = 'Evaluating:', suffix = 'Complete', barLength = 50)
+        time.sleep(0.3)
+    printProgress(l, l, prefix = 'Evaluating:', suffix = 'Complete', barLength = 50)
     q.join()
     while True:
         try:
@@ -285,6 +317,7 @@ def parallel_computing(ga_object):
         
 if __name__=='__main__':
     g=GAEnvironment(MAX_GEN,POP_SIZE,CXPB,MXPB)
+    create_threads()
     for i in range(g.maxgen):
         time_start=time.time()
         g.evaluatepopulation()
@@ -303,8 +336,9 @@ if __name__=='__main__':
         g.mutation()
         g.population=copy.deepcopy(g.newpopulation)
         print("Generation No: " +str(i))
-        print("Best Fitness :" +str(g.best.fitness))
-        print("Execution Time: "+ str(time.time()-time_start))
+        print("Best Fitness : %0.3f" %(g.best.fitness))
+        print("Execution Time: %0.3fs" %(time.time()-time_start))
+    fitness_function(g.hof,"Optimized")
         
         
         
