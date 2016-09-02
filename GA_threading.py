@@ -21,28 +21,31 @@ np.set_printoptions(precision=4)
 M_CONST=(0,0.04)
 P_CONST=(0.15,0.6)
 T_CONST=(0.075,0.2)
-A_CONST=(-2,2)
+A_CONST=(-15,15)
 
-M_STEP_SIZE=0.005
-P_STEP_SIZE=0.01
-T_STEP_SIZE=0.005
-A_STEP_SIZE=0.5
+M_STEP_SIZE=0.001
+P_STEP_SIZE=0.005
+T_STEP_SIZE=0.001
+A_STEP_SIZE=0.25
 
 SECTION_1_ELEMENTS=40
 SECTION_2_ELEMENTS=20
 SECTION_3_ELEMENTS=20
 
-REYNOLDS_NO=200000
-ALPHA_OPT=3
+REYNOLDS_NO=250000
+ALPHA_OPT=5
+XFOIL_STEP_SIZE=1
 
 CHROMOSOME_SIZE=4
-MAX_GEN=1
-POP_SIZE=10
+MAX_GEN=200
+POP_SIZE=50
 CXPB=0.95
-MXPB=0.05
-SELECTION_k=3
-NUM_THREADS=4
+MXPB=0.10
+SELECTION_k=4
+
+NUM_THREADS=2
 THREAD_LIST=[]
+XFOIL_TIMEOUT=20
 
 OPT_TYPE='MAX'                            #MAX or MIN
 q=queue.Queue()
@@ -174,7 +177,7 @@ def run_xfoil(thread_name,id) :
     cmd='xfoil.exe < session_'+str(thread_name)+'_'+str(id)+'.txt'
     p1=sp.Popen(cmd, shell=True,creationflags=sp.CREATE_NEW_CONSOLE)
     try:     
-        p1.wait(timeout=15)
+        p1.wait(timeout=XFOIL_TIMEOUT)
         errorCode=0
     except sp.TimeoutExpired:
         kill(p1.pid)
@@ -187,6 +190,7 @@ def change_session_file(thread_name,id):
     data[0]='load airfoil_'+str(thread_name)+'_'+str(id)+'.dat\n'                            #***PROGRAM WILL CRASH IF THESE INDICES ARE WRONG
     data[12]='output_'+str(thread_name)+'_'+str(id)+'.txt\n'
     data[7]=str(REYNOLDS_NO)+'\n'
+    data[14]='aseq 0 '+str(ALPHA_OPT)+' '+str(XFOIL_STEP_SIZE)+'\n'
     
     with open('session_'+str(thread_name)+'_'+str(id)+'.txt' ,'w') as file:                    #Write the session file for that thread
         file.writelines(data)
@@ -231,28 +235,31 @@ def fitness_function(individual,thread_name):
     change_session_file(thread_name,id)
     errorCode=run_xfoil(thread_name,id)
     if errorCode is 1:
-        flag=0
+        return -np.inf
     else:    
         cl_dict,cd_dict =read_output(thread_name,id)
         flag=0
         try:
-            cl=cl_dict[ALPHA_OPT]
-            cd=cd_dict[ALPHA_OPT]
+            cl=[cl_dict[k] for k in range(0, ALPHA_OPT+1)]
+            cd=[cd_dict[k] for k in range(0, ALPHA_OPT+1)]
             flag=1
+            fitness=[cl[k]/cd[k] for k in range(len(cl))][0]
         except KeyError:
-            try:
-                cl=cl_dict[ALPHA_OPT+1]
-                cd=cd_dict[ALPHA_OPT+1]
-                flag=1
-            except KeyError:
-                try:
-                    cl=cl_dict[ALPHA_OPT-1]
-                    cd=cd_dict[ALPHA_OPT-1]
-                    flag=1
-                except KeyError:
-                    flag=0
-
-    return -np.inf if flag==0 else cl/cd
+            fitness=-np.inf
+            pass
+            # try:
+                # cl=cl_dict[ALPHA_OPT+1]
+                # cd=cd_dict[ALPHA_OPT+1]
+                # flag=1
+            # except KeyError:
+                # try:
+                    # cl=cl_dict[ALPHA_OPT-1]
+                    # cd=cd_dict[ALPHA_OPT-1]
+                    # flag=1
+                # except KeyError:
+                    # flag=0
+        
+        return fitness
 
 def printProgress (iteration, total, prefix = '', suffix = '', decimals = 1, barLength = 100):
     """
@@ -316,6 +323,7 @@ def parallel_computing(ga_object):
         
         
 if __name__=='__main__':
+    program_start=time.time()
     g=GAEnvironment(MAX_GEN,POP_SIZE,CXPB,MXPB)
     create_threads()
     for i in range(g.maxgen):
@@ -339,6 +347,7 @@ if __name__=='__main__':
         print("Best Fitness : %0.3f" %(g.best.fitness))
         print("Execution Time: %0.3fs" %(time.time()-time_start))
     fitness_function(g.hof,"Optimized")
+    print("Program Execution Time: %0.3fs" %(time.time()-program_start))
         
         
         
