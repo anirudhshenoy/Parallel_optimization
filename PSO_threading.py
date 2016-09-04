@@ -21,31 +21,44 @@ os.chdir(r'C:\Users\Aniru_000\Desktop\TD-1\Airfoil\s1223\airfoil\Python Code\tem
 np.set_printoptions(precision=4)
 
 """Constants"""
+KINEMATIC_VISCOSITY=1.50375e-5
+OPERATING_VELOCITY=12
+RHO=1.225
+E_1=0.8
+
 M_CONST=(0,0.04)
 P_CONST=(0.15,0.6)
 T_CONST=(0.075,0.2)
 A_CONST=(-15,15)
+B_WING_CONST=(0.5,5)
+C_WING_CONST=(0.2,0.4)
+ALPHA_WING_CONST=(0,3)
+TAPER_WING_CONST=(0.5,0.95)
 
-CONSTRAINTS=(M_CONST,P_CONST,T_CONST,A_CONST)
+CONSTRAINTS=(M_CONST,P_CONST,T_CONST,A_CONST,B_WING_CONST,C_WING_CONST,ALPHA_WING_CONST,TAPER_WING_CONST)
 
 M_STEP_SIZE=0.001
 P_STEP_SIZE=0.005
 T_STEP_SIZE=0.001
 A_STEP_SIZE=0.25
+B_WING_STEP_SIZE=0.05
+C_WING_STEP_SIZE=0.05
+ALPHA_WING_STEP_SIZE=0.5
+TAPER_WING_STEP_SIZE=0.01
 
 SECTION_1_ELEMENTS=40
 SECTION_2_ELEMENTS=20
 SECTION_3_ELEMENTS=20
 
-REYNOLDS_NO=250000
-ALPHA_OPT=5
-XFOIL_STEP_SIZE=1
 
-CHROMOSOME_SIZE=4
+XFOIL_STEP_SIZE=ALPHA_WING_STEP_SIZE
+XFOIL_LOWER_BOUND=-2
+
+CHROMOSOME_SIZE=8
 MAX_ITER=5
 POP_SIZE=10
 
-NUM_THREADS=2
+NUM_THREADS=1
 THREAD_LIST=[]
 XFOIL_TIMEOUT=20
 
@@ -60,15 +73,20 @@ class Individual(object):
         p=np.random.choice(np.arange(P_CONST[0],P_CONST[1]+P_STEP_SIZE,P_STEP_SIZE))                #include stop 
         t=np.random.choice(np.arange(T_CONST[0],T_CONST[1]+T_STEP_SIZE,T_STEP_SIZE))
         a=np.random.choice(np.arange(A_CONST[0],A_CONST[1]+A_STEP_SIZE,A_STEP_SIZE))
-        self.dimensions=np.array([m,p,t,a])
-        self.velocity=np.array([0,0,0,0])
-        self.lbest=np.array([0,0,0,0])
-        self.lbest_fitness=-np.inf
+        b_wing=np.random.choice(np.arange(B_WING_CONST[0],B_WING_CONST[1]+B_WING_STEP_SIZE,B_WING_STEP_SIZE))
+        c_wing=np.random.choice(np.arange(C_WING_CONST[0],C_WING_CONST[1]+C_WING_STEP_SIZE,C_WING_STEP_SIZE))
+        alpha_wing=np.random.choice(np.arange(ALPHA_WING_CONST[0],ALPHA_WING_CONST[1]+ALPHA_WING_STEP_SIZE,ALPHA_WING_STEP_SIZE))
+        taper_wing=np.random.choice(np.arange(TAPER_WING_CONST[0],TAPER_WING_CONST[1]+TAPER_WING_STEP_SIZE,TAPER_WING_STEP_SIZE))
+       
+        self.dimensions=np.array([m,p,t,a,b_wing,c_wing,alpha_wing,taper_wing])
+        self.velocity=np.array([0,0,0,0,0,0,0,0])                   #Fix this when free
+        self.lbest=np.array([0,0,0,0,0,0,0,0]) 
+        self.lbest_fitness=-np.inf if OPT_TYPE=='MAX' else np.inf
         self.id=id
         self.fitness= -np.inf if OPT_TYPE=='MAX' else np.inf
         
     def evaluate(self,thread_name):
-        self.fitness= fitness_function(self,thread_name) #FITNESS FUNCTION CALL return fitness 
+        self.fitness= fitness_function(self,thread_name)                            #FITNESS FUNCTION CALL return fitness 
         
     def update_lbest(self):
         if self.lbest_fitness>self.fitness:
@@ -109,7 +127,10 @@ class swarm_optimizer(object):
         for i in range(self.pop_size):
             ind=self.population[i]
             ind.velocity=self.chi*(ind.velocity+(self.c1*np.random.random()*(ind.lbest-ind.dimensions))+(self.c2*np.random.random()*(self.gbest.dimensions-ind.dimensions)))
+            #print(ind.dimensions)
+            #print(ind.velocity)
             ind.dimensions=ind.dimensions+ind.velocity
+            #print(ind.dimensions)
             for j in range(len(ind.dimensions)):
                 if ind.dimensions[j]<CONSTRAINTS[j][0]:
                     ind.dimensions[j]=CONSTRAINTS[j][0]                    
@@ -182,13 +203,13 @@ def run_xfoil(thread_name,id) :
         errorCode=1
     return(errorCode)
 
-def change_session_file(thread_name,id):
+def change_session_file(thread_name,reynolds_no,alpha_opt,id):
     with open('session.txt','r') as file:
         data=file.readlines()
     data[0]='load airfoil_'+str(thread_name)+'_'+str(id)+'.dat\n'                            #***PROGRAM WILL CRASH IF THESE INDICES ARE WRONG
     data[12]='output_'+str(thread_name)+'_'+str(id)+'.txt\n'
-    data[7]=str(REYNOLDS_NO)+'\n'
-    data[14]='aseq 0 '+str(ALPHA_OPT)+' '+str(XFOIL_STEP_SIZE)+'\n'
+    data[7]=str(reynolds_no)+'\n'
+    data[14]='aseq '+str(XFOIL_LOWER_BOUND)+' '+str(alpha_opt)+' '+str(XFOIL_STEP_SIZE)+'\n'
     
     with open('session_'+str(thread_name)+'_'+str(id)+'.txt' ,'w') as file:                    #Write the session file for that thread
         file.writelines(data)
@@ -228,24 +249,72 @@ def fitness_function(individual,thread_name):
     p=individual.dimensions[1]
     t=individual.dimensions[2]
     a=individual.dimensions[3]
+    b_wing=individual.dimensions[4]
+    c_wing=individual.dimensions[5]
+    alpha_wing=individual.dimensions[6]
+    taper_wing=individual.dimensions[7]
     id=individual.id
+    
+    """Initial Calculations"""
+    reynolds_no=(OPERATING_VELOCITY*c_wing)/KINEMATIC_VISCOSITY
+    MAC_wing=(2/3)*c_wing*((taper_wing**2 + taper_wing +1)/(taper_wing+1))
+    wing_area=b_wing*MAC_wing
+    AR_wing=(b_wing**2)/wing_area
+    
     airfoil_gen(m,p,t,a,thread_name,id)
-    change_session_file(thread_name,id)
+    change_session_file(thread_name,reynolds_no,alpha_wing,id)
     errorCode=run_xfoil(thread_name,id)
     if errorCode is 1:
         return np.inf
     else:    
         cl_dict,cd_dict =read_output(thread_name,id)
         flag=0
-        try:
-            cl=[cl_dict[k] for k in range(0, ALPHA_OPT+1)]
-            cd=[cd_dict[k] for k in range(0, ALPHA_OPT+1)]
-            flag=1
-            fitness=-np.mean([cl[k]/cd[k] for k in range(len(cl))])
-        except KeyError:
-            fitness=np.inf
-            pass
+        cl=np.array([])
+        cd=np.array([])
+        alpha_airfoil=np.array([])
+        for k in np.arange(XFOIL_LOWER_BOUND, alpha_wing+1,XFOIL_STEP_SIZE):               #Check for exceptions   
+            try:
+                cl=np.append(cl,cl_dict[k])
+                cd=np.append(cd,cd_dict[k])
+                alpha_airfoil=np.append(alpha_airfoil,k)
+            except KeyError:
+                continue
+        
+        if len(cl)>0:                                                              #Valid values for airfoil
+            """Begin Wing Calculations"""        
+            airfoil_equation=np.polyfit(alpha_airfoil,cl,1)
+            a0=airfoil_equation[0]
+            alpha_0=-airfoil_equation[1]/a0
+            
+            """Slope Correction"""
+            a_wing=(a0*AR_wing)/(2+(4+AR_wing**2)**0.5)
+            
+            """Wing Lift Calculations"""
+            CL_wing=a_wing*(alpha_wing-(a0))
+            lift_wing=0.5*RHO*(OPERATING_VELOCITY**2)*wing_area*CL_wing
+            
+            """Wing Drag Calculations"""
+            cd_p=0
+            for k in np.arange(alpha_wing,XFOIL_LOWER_BOUND-1,XFOIL_STEP_SIZE):                   #Use 2 for loops to look ahead and behind (or nested)
+                try:
+                    cd_p=cd_dict[k]
+                    break
+                except KeyError:
+                    continue
+                    
+            CD_i_wing=(CL_wing**2)/(np.pi*E_1*AR_wing)
+            CD_wing=CD_i_wing+cd_p
+            drag_wing=0.5*RHO*(OPERATING_VELOCITY**2)*wing_area*CD_wing
+            print(CL_wing)
+            print(lift_wing)
+            print(CD_wing)
+            print(drag_wing)
+            #fitness=-CL_wing/CD_wing
+            fitness=-100*np.exp(-((lift_wing-35.28)**2)/(2*35**2))
            
+        else:
+            fitness=np.inf
+        
         
         return fitness
 
