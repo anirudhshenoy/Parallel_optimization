@@ -21,15 +21,11 @@ os.chdir(r'C:\Users\Aniru_000\Desktop\TD-1\Airfoil\s1223\airfoil\Python Code\tem
 np.set_printoptions(precision=4)
 
 """Constants"""
-# M_CONST=(0,0.04)
-# P_CONST=(0.15,0.6)
-# T_CONST=(0.075,0.2)
-# A_CONST=(-15,15)
+M_CONST=(0,0.04)
+P_CONST=(0.15,0.6)
+T_CONST=(0.075,0.2)
+A_CONST=(-15,15)
 
-M_CONST=(-5.12,5.12)
-P_CONST=(-5.12,5.12)
-T_CONST=(0.0,0)
-A_CONST=(0,0)
 CONSTRAINTS=(M_CONST,P_CONST,T_CONST,A_CONST)
 
 M_STEP_SIZE=0.001
@@ -46,10 +42,10 @@ ALPHA_OPT=5
 XFOIL_STEP_SIZE=1
 
 CHROMOSOME_SIZE=4
-MAX_ITER=100
-POP_SIZE=50
+MAX_ITER=5
+POP_SIZE=10
 
-NUM_THREADS=4
+NUM_THREADS=2
 THREAD_LIST=[]
 XFOIL_TIMEOUT=20
 
@@ -72,22 +68,14 @@ class Individual(object):
         self.fitness= -np.inf if OPT_TYPE=='MAX' else np.inf
         
     def evaluate(self,thread_name):
-        #self.fitness= fitness_function(self,thread_name) #FITNESS FUNCTION CALL return fitness 
-        self.fitness=sphere_test(self)
-    
+        self.fitness= fitness_function(self,thread_name) #FITNESS FUNCTION CALL return fitness 
+        
     def update_lbest(self):
         if self.lbest_fitness>self.fitness:
             self.lbest=copy.deepcopy(self.dimensions)
             self.lbest_fitness=self.fitness
             
         
-
-def sphere_test(individual):
-    x=individual.dimensions[0]
-    y=individual.dimensions[1]
-    time.sleep(0.01)
-    return 20+((x**2-(10*np.cos(2*np.pi*x)))+(y**2-(10*np.cos(2*np.pi*y))))
-
 
     
 class swarm_optimizer(object):
@@ -245,7 +233,7 @@ def fitness_function(individual,thread_name):
     change_session_file(thread_name,id)
     errorCode=run_xfoil(thread_name,id)
     if errorCode is 1:
-        return -np.inf
+        return np.inf
     else:    
         cl_dict,cd_dict =read_output(thread_name,id)
         flag=0
@@ -253,21 +241,11 @@ def fitness_function(individual,thread_name):
             cl=[cl_dict[k] for k in range(0, ALPHA_OPT+1)]
             cd=[cd_dict[k] for k in range(0, ALPHA_OPT+1)]
             flag=1
-            fitness=[cl[k]/cd[k] for k in range(len(cl))][0]
+            fitness=-np.mean([cl[k]/cd[k] for k in range(len(cl))])
         except KeyError:
-            fitness=-np.inf
+            fitness=np.inf
             pass
-            # try:
-                # cl=cl_dict[ALPHA_OPT+1]
-                # cd=cd_dict[ALPHA_OPT+1]
-                # flag=1
-            # except KeyError:
-                # try:
-                    # cl=cl_dict[ALPHA_OPT-1]
-                    # cd=cd_dict[ALPHA_OPT-1]
-                    # flag=1
-                # except KeyError:
-                    # flag=0
+           
         
         return fitness
 
@@ -297,9 +275,7 @@ def get_task(thread_name):
         individual=q.get()
         individual.evaluate(thread_name)       
         q.task_done()
-        # if(q.qsize()%10==0):
-            # print(str(q.qsize())+" remaining")
-            
+      
 def create_threads():
     for i in range(NUM_THREADS):
         THREAD_LIST.append(threading.Thread(target=get_task, args=('Thread_'+str(i),), name='Thread_'+str(i)))
@@ -337,14 +313,12 @@ class AnimatedScatter(object):
     def __init__(self, g):
         self.g=g
         # Setup the figure and axes...
-        self.fig, self.ax = plt.subplots(figsize=(15,15))
-        
-        
+        self.fig, self.ax = plt.subplots()
         plt.ion()
-        
         # Then setup FuncAnimation.
-        self.ani = animation.FuncAnimation(self.fig, self.update, interval=1, 
+        self.ani = animation.FuncAnimation(self.fig, self.update, interval=10, 
                                            init_func=self.setup_plot, blit=True)
+    
     def sphere_plot(self,x,y):
         return 20+((x**2-(10*np.cos(2*np.pi*x)))+(y**2-(10*np.cos(2*np.pi*y))))
         
@@ -352,73 +326,57 @@ class AnimatedScatter(object):
 
     def setup_plot(self):
         """Initial drawing of the scatter plot."""
-
         x=np.array([self.g.population[i].dimensions[0] for i in range(self.g.pop_size)])
         y=np.array([self.g.population[i].dimensions[1] for i in range(self.g.pop_size)])
-        
+        x=(x-np.min(x))/(np.max(x)-np.min(x))
+        y=(y-np.min(y))/(np.max(y)-np.min(y))
         self.scat = self.ax.scatter(x, y, animated=True)
         self.prev_x=copy.deepcopy(x)
         self.prev_y=copy.deepcopy(y)
         self.prev2_x=copy.deepcopy(x)
         self.prev2_y=copy.deepcopy(y)
-        self.ax.axis([M_CONST[0], M_CONST[1], P_CONST[0], P_CONST[1]])
-        x=np.linspace(M_CONST[0], M_CONST[1])
-        y=np.linspace(P_CONST[0], P_CONST[1])
-        xv,yv=np.meshgrid(x,y)
-        z=self.sphere_plot(xv,yv)
+        self.ax.axis([0,1, 0,1])
+        # x=np.linspace(M_CONST[0], M_CONST[1])
+        # y=np.linspace(P_CONST[0], P_CONST[1])
+        # xv,yv=np.meshgrid(x,y)
+        # z=self.sphere_plot(xv,yv)
         #self.ax.scatter(512,404.2319,marker='x')
-        self.ax.imshow(z, cmap='autumn_r', interpolation='none',extent=[M_CONST[0], M_CONST[1], P_CONST[0], P_CONST[1]])
+        # self.ax.imshow(z, cmap='autumn_r', interpolation='none',extent=[M_CONST[0], M_CONST[1], P_CONST[0], P_CONST[1]])
 
-        # For FuncAnimation's sake, we need to return the artist we'll be using
-        # Note that it expects a sequence of artists, thus the trailing comma.
         return self.scat,
     
     
 
     def update(self, i):
         """Update the scatter plot."""
-        #data = next(self.stream)
         x=np.array([self.g.population[i].dimensions[0] for i in range(self.g.pop_size)])
         y=np.array([self.g.population[i].dimensions[1] for i in range(self.g.pop_size)])
         xv=np.array([self.g.population[i].velocity[0] for i in range(self.g.pop_size)])
         yv=np.array([self.g.population[i].velocity[1] for i in range(self.g.pop_size)])
         
         
-        if (self.prev_x==x).all():
-            #m=(self.prev_y-self.prev2_y)/(self.prev_x-self.prev2_x)
+        if (self.prev_x==x).all():      
             del_x=self.prev_x-self.prev2_x
             del_y=self.prev_y-self.prev2_y
-            y=self.prev2_y+(0.05*del_y)
-            x=self.prev2_x+(0.05*del_x)
+            y=self.prev2_y+(0.001*del_y)
+            x=self.prev2_x+(0.001*del_x)
             self.prev2_x=copy.deepcopy(x)
             self.prev2_y=copy.deepcopy(y)
             data=[x,y]
             
         else:
-            #self.prev2_x=copy.deepcopy(x)
-            #self.prev2_y=copy.deepcopy(y)
             self.prev_x=copy.deepcopy(x)
             self.prev_y=copy.deepcopy(y)
             self.time_start=time.time()
             del_x=self.prev_x-self.prev2_x
             del_y=self.prev_y-self.prev2_y
-            y=self.prev2_y+(0.05*del_y)
-            x=self.prev2_x+(0.05*del_x)
+            y=self.prev2_y+(0.001*del_y)
+            x=self.prev2_x+(0.001*del_x)
             self.prev2_x=copy.deepcopy(x)
             self.prev2_y=copy.deepcopy(y)
             data=[x,y]
-            
-            
-        
-        # Set x and y data...
-        self.scat.set_offsets(data)
-        # Set sizes...
-        #self.scat._sizes = 300 * abs(data[2])**1.5 + 100
-        # Set colors..
-        #self.scat.set_array(data[3])
-
-        # We need to return the updated artist for FuncAnimation to draw..
-        # Note that it expects a sequence of artists, thus the trailing comma.
+                 
+        self.scat.set_offsets(data)  
         return self.scat,
      
     def plt_update(self):
@@ -439,9 +397,11 @@ if __name__=='__main__':
     
     program_start=time.time()
     g=swarm_optimizer(MAX_ITER,POP_SIZE)
-    plt_update_thread=threading.Thread(target=update_plot, args=(g,))
-    plt_update_thread.setDaemon(True)
-    plt_update_thread.start()
+    # plt_update_thread=threading.Thread(target=update_plot, args=(g,))                 #Uncomment for animation
+    # plt_update_thread.setDaemon(True)
+    # plt_update_thread.start()
+    
+    
     create_threads()
     input('Ready')
     
@@ -449,20 +409,16 @@ if __name__=='__main__':
     for iter in range(g.maxiter):
         time_start=time.time()
         g.evaluatepopulation()
-        g.update_individuals()
-       
-        
+        g.update_individuals()  
         g.population.sort(key=operator.attrgetter('fitness'))
-        #print(np.array([g.population[i].fitness for i in range(10)]))
+        print(np.array([g.population[i].fitness for i in range(10)]))
         g.halloffame(g.population[0])
         g.update_vector()
-        #time.sleep(1)
-        
-      
+
         print("Generation No: " +str(iter))
-        #print("Best Fitness : %0.3f" %(g.best.fitness))
-        #print("Execution Time: %0.3fs" %(time.time()-time_start))
-    #fitness_function(g.gbest,"Optimized")
+        print("Best Fitness : %0.3f" %(g.best.fitness))
+        print("Execution Time: %0.3fs" %(time.time()-time_start))
+    fitness_function(g.gbest,"Optimized")
     print("Program Execution Time: %0.3fs" %(time.time()-program_start))
     print("Best Individual:" )
     print(g.gbest.dimensions)
