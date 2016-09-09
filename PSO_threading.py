@@ -22,6 +22,7 @@ np.set_printoptions(precision=4)
 KINEMATIC_VISCOSITY=1.50375e-5
 OPERATING_VELOCITY=12
 RHO=1.225
+ACC_GRAVITY=9.8
 E_1=0.8
 
 M_CONST=(0,0.04)
@@ -32,6 +33,9 @@ B_WING_CONST=(0.5,5)
 C_WING_CONST=(0.2,0.4)
 ALPHA_WING_CONST=(0,3)
 TAPER_WING_CONST=(0.5,0.95)
+LIFT_TARGET_KGS=2.5
+LIFT_TARGET=LIFT_TARGET_KGS*ACC_GRAVITY
+DRAG_TARGET=0
 
 CONSTRAINTS=(M_CONST,P_CONST,T_CONST,A_CONST,B_WING_CONST,C_WING_CONST,ALPHA_WING_CONST,TAPER_WING_CONST)
 
@@ -41,21 +45,21 @@ T_STEP_SIZE=0.001
 A_STEP_SIZE=0.25
 B_WING_STEP_SIZE=0.05
 C_WING_STEP_SIZE=0.05
-ALPHA_WING_STEP_SIZE=0.5
+ALPHA_WING_STEP_SIZE=0.25
 TAPER_WING_STEP_SIZE=0.01
 
 R_LLT=20
 
 
-XFOIL_LOWER_BOUND=-2
+XFOIL_LOWER_BOUND=-5
 
 CHROMOSOME_SIZE=8
-MAX_ITER=1
-POP_SIZE=10
+MAX_ITER=10
+POP_SIZE=50
 
-NUM_THREADS=1
+NUM_THREADS=2
 THREAD_LIST=[]
-XFOIL_TIMEOUT=20
+XFOIL_TIMEOUT=30
 
 OPT_TYPE='MIN'                            #MAX or MIN
 q=queue.Queue()
@@ -224,22 +228,25 @@ def fitness_function(individual,thread_name):
     reynolds_no[1]=(OPERATING_VELOCITY*c_wing[int(len(c_wing)/2)])/KINEMATIC_VISCOSITY
     reynolds_no[2]=(OPERATING_VELOCITY*c_wing[-1])/KINEMATIC_VISCOSITY
     
-    
+    reynolds_no_iter=copy.deepcopy(reynolds_no)
     exit_counter=0
     cl_alpha=np.array([])
-    alpha_0=np.array([])    
+    cd_0_cl=np.array([])
+    alpha_0=np.array([])
+    cd_coeff=[]
     naca_airfoil_gen.airfoil_gen(m,p,t,a,thread_name,id)
     for re_iter in range(3):
-        change_session_file(thread_name,reynolds_no[re_iter],alpha_wing,id)
+        change_session_file(thread_name,reynolds_no_iter[re_iter],alpha_wing,id)
         errorCode=run_xfoil(thread_name,id)
         if errorCode is 1:
             reynolds_no=np.delete(reynolds_no,re_iter)
             exit_counter+=1
         else:    
-            cl_dict,cd_dict =read_output(thread_name,id)
+            cl_dict,cd_dict=read_output(thread_name,id)
             flag=0
             cl=np.array([])
             cd=np.array([])
+            
             alpha_airfoil=np.array([])
             for k in np.arange(XFOIL_LOWER_BOUND, alpha_wing+1,ALPHA_WING_STEP_SIZE):               #Check for exceptions   
                 try:
@@ -252,7 +259,9 @@ def fitness_function(individual,thread_name):
             if len(cl)>0:                                                              #Valid values for airfoil
                 slope,intercept=np.polyfit(alpha_airfoil,cl,1)
                 cl_alpha=np.append(cl_alpha,slope)
-                alpha_0=np.append(alpha_0,(-intercept/slope))   
+                alpha_0=np.append(alpha_0,(-intercept/slope))
+                cd_coeff=np.polyfit(cl,cd,2)
+                cd_0_cl=np.append(cd_0_cl,cd_coeff[0])
             else:
                 reynolds_no=np.delete(reynolds_no,re_iter)
                 exit_counter+=1
@@ -260,6 +269,8 @@ def fitness_function(individual,thread_name):
     if len(cl_alpha)>1:
         cl_re_slope,cl_re_intercept=np.polyfit(reynolds_no,cl_alpha,1)
         alpha_re_slope,alpha_re_intercept=np.polyfit(reynolds_no,alpha_0,1)
+        cd_0_re_slope,cd_0_re_intercept=np.polyfit(reynolds_no,cd_0_cl,1)
+        cd_0_section=np.array([])
         cl_alpha_section=np.array([])
         alpha_0_section=np.array([])
         for chord in c_wing:
@@ -268,18 +279,25 @@ def fitness_function(individual,thread_name):
             cl_alpha_section=np.append(cl_alpha_section,temp_cl)
             temp_alpha_0=alpha_re_slope*temp_re+alpha_re_intercept
             alpha_0_section=np.append(alpha_0_section,temp_alpha_0)
+            temp_cd_0_cl=cd_0_re_slope*temp_re+cd_0_re_intercept
+            cd_0_section=np.append(cd_0_section,temp_cd_0_cl)
     else:
         cl_alpha_section=np.array([])
         alpha_0_section=np.array([])
+        cd_0_section=np.array([])
         for chord in c_wing:
             cl_alpha_section=np.append(cl_alpha_section,cl_alpha[0])
             alpha_0_section=np.append(alpha_0_section,alpha_0[0])
-            
+            cd_0_section=np.append(cd_0_section,cd_0_cl[0])
     if exit_counter<3:
-        CL_wing,CD_wing=nonlinear_llt.LLT(b_wing,c_wing,cl_alpha_section,alpha_wing,R_LLT,AR_wing,alpha_0_section)
+        CL_wing,CD_wing=nonlinear_llt.LLT(b_wing,c_wing,cl_alpha_section,alpha_wing,R_LLT,wing_area,alpha_0_section,cd_0_section,cd_coeff)
         #print(CL_wing)
         #print(CD_wing)
-        return -(CL_wing)
+        lift=0.5*RHO*(OPERATING_VELOCITY**2)*wing_area*CL_wing
+        drag=0.5*RHO*(OPERATING_VELOCITY**2)*wing_area*CD_wing
+        lift_fit=-100*np.exp(-((lift-LIFT_TARGET)**2)/(2*35**2))   #70,7                     #Gaussian function centred around lift_constant, A controls height
+        drag_fit=-50*np.exp(-((drag-DRAG_TARGET)**2)/(2*35**2))                             #stall angle characteristics  Minimize moment
+        return (lift_fit+drag_fit)
     else:
         return np.inf
 
