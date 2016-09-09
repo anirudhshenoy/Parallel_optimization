@@ -12,12 +12,10 @@ import queue
 import time
 import psutil
 import sys
-import matplotlib.pyplot as plt
-import matplotlib.animation as animation
-import multiprocessing
+import nonlinear_llt
+import naca_airfoil_gen
 
 os.chdir(r'C:\Users\Aniru_000\Desktop\TD-1\Airfoil\s1223\airfoil\Python Code\tempfiles')
-
 np.set_printoptions(precision=4)
 
 """Constants"""
@@ -46,16 +44,13 @@ C_WING_STEP_SIZE=0.05
 ALPHA_WING_STEP_SIZE=0.5
 TAPER_WING_STEP_SIZE=0.01
 
-SECTION_1_ELEMENTS=40
-SECTION_2_ELEMENTS=20
-SECTION_3_ELEMENTS=20
+R_LLT=20
 
 
-XFOIL_STEP_SIZE=ALPHA_WING_STEP_SIZE
 XFOIL_LOWER_BOUND=-2
 
 CHROMOSOME_SIZE=8
-MAX_ITER=5
+MAX_ITER=1
 POP_SIZE=10
 
 NUM_THREADS=1
@@ -142,43 +137,6 @@ class swarm_optimizer(object):
             self.population[i].update_lbest()
 
 
-def y_thickness(x,t):
-    return ((t/0.2)*((0.29690*(x**0.5))-(0.126*x)-(0.3516*(x**2))+(0.28430*(x**3))-(0.10150*(x**4))))
-
-def airfoil_gen (m,p,t,a,thread_name,id):
-    
-    x=np.arange(0,0.03,(0.03-0)/(0.5*SECTION_1_ELEMENTS))
-    x=np.append(x,np.arange(0.03,0.1,(0.1-0.03)/(0.5*SECTION_2_ELEMENTS)))
-    x=np.append(x,np.arange(0.1,1.02,(1.001-0.1)/(0.5*SECTION_3_ELEMENTS)))           #1.02
-    upper=np.array([])
-    lower=np.array([])
-    
-    for i in range(len(x)):
-        if x[i]<=p:
-            yc=(m/(p**2))*((2*p*x[i])-(x[i]**2))
-            dyc=((2*m)/p**2)*(p-x[i])
-        else:
-            a_temp=np.array([[1,1,1,1],[1,p,p**2,p**3],[0,1,2*p,3*p*p],[0,1,2,3]])
-            b_temp=np.array([0,m,0,np.tan(-a/57.29)])
-            b=np.linalg.solve(a_temp,b_temp)
-            yc=b[0]+(b[1]*x[i])+(b[2]*(x[i]**2))+(b[3]*(x[i]**3))
-            dyc=b[1]+(2*b[2]*x[i])+(3*b[3]*(x[i]**2))
-        
-        theta=np.arctan(dyc)
-        yt=y_thickness(x[i],t)
-        xu=x[i]-(yt*np.sin(theta))            #Assign directly
-        yu=yc+(yt*np.cos(theta))
-        xl=x[i]+(yt*np.sin(theta))
-        yl=yc-(yt*np.cos(theta))
-        upper=np.append(upper,np.array([xu,yu]))
-        lower=np.append(lower,np.array([xl,yl]))
-
-    airfoil_dat=open("airfoil_"+str(thread_name)+'_'+str(id)+".dat", 'w')
-    airfoil_dat.write("TEST AIRFOIL\n\n")
-    for i in range(len(upper)-1,-1,-2):
-        airfoil_dat.write("%f \t %f\n" %(upper[i-1], upper[i]))
-    for i in range(0,len(lower),2):
-        airfoil_dat.write("%f \t %f\n" %(lower[i], lower[i+1]))
         
 def kill(proc_pid):
     process = psutil.Process(proc_pid)
@@ -209,7 +167,7 @@ def change_session_file(thread_name,reynolds_no,alpha_opt,id):
     data[0]='load airfoil_'+str(thread_name)+'_'+str(id)+'.dat\n'                            #***PROGRAM WILL CRASH IF THESE INDICES ARE WRONG
     data[12]='output_'+str(thread_name)+'_'+str(id)+'.txt\n'
     data[7]=str(reynolds_no)+'\n'
-    data[14]='aseq '+str(XFOIL_LOWER_BOUND)+' '+str(alpha_opt)+' '+str(XFOIL_STEP_SIZE)+'\n'
+    data[14]='aseq '+str(XFOIL_LOWER_BOUND)+' '+str(alpha_opt)+' '+str(ALPHA_WING_STEP_SIZE)+'\n'
     
     with open('session_'+str(thread_name)+'_'+str(id)+'.txt' ,'w') as file:                    #Write the session file for that thread
         file.writelines(data)
@@ -256,67 +214,74 @@ def fitness_function(individual,thread_name):
     id=individual.id
     
     """Initial Calculations"""
-    reynolds_no=(OPERATING_VELOCITY*c_wing)/KINEMATIC_VISCOSITY
     MAC_wing=(2/3)*c_wing*((taper_wing**2 + taper_wing +1)/(taper_wing+1))
     wing_area=b_wing*MAC_wing
     AR_wing=(b_wing**2)/wing_area
+    y=np.linspace(0,b_wing/2,int(R_LLT/2))
+    c_wing=((2*wing_area)/(b_wing*(1+taper_wing)))*(1-(2*np.fabs(y)-(2*np.fabs(y)*taper_wing))/b_wing)
+    reynolds_no=np.array([0,0,0])                   #Calculate Reynolds no for root, b/4 and tip
+    reynolds_no[0]=(OPERATING_VELOCITY*c_wing[0])/KINEMATIC_VISCOSITY
+    reynolds_no[1]=(OPERATING_VELOCITY*c_wing[int(len(c_wing)/2)])/KINEMATIC_VISCOSITY
+    reynolds_no[2]=(OPERATING_VELOCITY*c_wing[-1])/KINEMATIC_VISCOSITY
     
-    airfoil_gen(m,p,t,a,thread_name,id)
-    change_session_file(thread_name,reynolds_no,alpha_wing,id)
-    errorCode=run_xfoil(thread_name,id)
-    if errorCode is 1:
-        return np.inf
-    else:    
-        cl_dict,cd_dict =read_output(thread_name,id)
-        flag=0
-        cl=np.array([])
-        cd=np.array([])
-        alpha_airfoil=np.array([])
-        for k in np.arange(XFOIL_LOWER_BOUND, alpha_wing+1,XFOIL_STEP_SIZE):               #Check for exceptions   
-            try:
-                cl=np.append(cl,cl_dict[k])
-                cd=np.append(cd,cd_dict[k])
-                alpha_airfoil=np.append(alpha_airfoil,k)
-            except KeyError:
-                continue
-        
-        if len(cl)>0:                                                              #Valid values for airfoil
-            """Begin Wing Calculations"""        
-            airfoil_equation=np.polyfit(alpha_airfoil,cl,1)
-            a0=airfoil_equation[0]
-            alpha_0=-airfoil_equation[1]/a0
-            
-            """Slope Correction"""
-            a_wing=(a0*AR_wing)/(2+(4+AR_wing**2)**0.5)
-            
-            """Wing Lift Calculations"""
-            CL_wing=a_wing*(alpha_wing-(a0))
-            lift_wing=0.5*RHO*(OPERATING_VELOCITY**2)*wing_area*CL_wing
-            
-            """Wing Drag Calculations"""
-            cd_p=0
-            for k in np.arange(alpha_wing,XFOIL_LOWER_BOUND-1,XFOIL_STEP_SIZE):                   #Use 2 for loops to look ahead and behind (or nested)
+    
+    exit_counter=0
+    cl_alpha=np.array([])
+    alpha_0=np.array([])    
+    naca_airfoil_gen.airfoil_gen(m,p,t,a,thread_name,id)
+    for re_iter in range(3):
+        change_session_file(thread_name,reynolds_no[re_iter],alpha_wing,id)
+        errorCode=run_xfoil(thread_name,id)
+        if errorCode is 1:
+            reynolds_no=np.delete(reynolds_no,re_iter)
+            exit_counter+=1
+        else:    
+            cl_dict,cd_dict =read_output(thread_name,id)
+            flag=0
+            cl=np.array([])
+            cd=np.array([])
+            alpha_airfoil=np.array([])
+            for k in np.arange(XFOIL_LOWER_BOUND, alpha_wing+1,ALPHA_WING_STEP_SIZE):               #Check for exceptions   
                 try:
-                    cd_p=cd_dict[k]
-                    break
+                    cl=np.append(cl,cl_dict[k])
+                    cd=np.append(cd,cd_dict[k])
+                    alpha_airfoil=np.append(alpha_airfoil,k)
                 except KeyError:
                     continue
-                    
-            CD_i_wing=(CL_wing**2)/(np.pi*E_1*AR_wing)
-            CD_wing=CD_i_wing+cd_p
-            drag_wing=0.5*RHO*(OPERATING_VELOCITY**2)*wing_area*CD_wing
-            print(CL_wing)
-            print(lift_wing)
-            print(CD_wing)
-            print(drag_wing)
-            #fitness=-CL_wing/CD_wing
-            fitness=-100*np.exp(-((lift_wing-35.28)**2)/(2*35**2))
-           
-        else:
-            fitness=np.inf
-        
-        
-        return fitness
+            
+            if len(cl)>0:                                                              #Valid values for airfoil
+                slope,intercept=np.polyfit(alpha_airfoil,cl,1)
+                cl_alpha=np.append(cl_alpha,slope)
+                alpha_0=np.append(alpha_0,(-intercept/slope))   
+            else:
+                reynolds_no=np.delete(reynolds_no,re_iter)
+                exit_counter+=1
+        os.remove('output_'+str(thread_name)+'_'+str(id)+'.txt')        
+    if len(cl_alpha)>1:
+        cl_re_slope,cl_re_intercept=np.polyfit(reynolds_no,cl_alpha,1)
+        alpha_re_slope,alpha_re_intercept=np.polyfit(reynolds_no,alpha_0,1)
+        cl_alpha_section=np.array([])
+        alpha_0_section=np.array([])
+        for chord in c_wing:
+            temp_re=(OPERATING_VELOCITY*chord)/KINEMATIC_VISCOSITY
+            temp_cl=cl_re_slope*temp_re +cl_re_intercept
+            cl_alpha_section=np.append(cl_alpha_section,temp_cl)
+            temp_alpha_0=alpha_re_slope*temp_re+alpha_re_intercept
+            alpha_0_section=np.append(alpha_0_section,temp_alpha_0)
+    else:
+        cl_alpha_section=np.array([])
+        alpha_0_section=np.array([])
+        for chord in c_wing:
+            cl_alpha_section=np.append(cl_alpha_section,cl_alpha[0])
+            alpha_0_section=np.append(alpha_0_section,alpha_0[0])
+            
+    if exit_counter<3:
+        CL_wing,CD_wing=nonlinear_llt.LLT(b_wing,c_wing,cl_alpha_section,alpha_wing,R_LLT,AR_wing,alpha_0_section)
+        #print(CL_wing)
+        #print(CD_wing)
+        return -(CL_wing)
+    else:
+        return np.inf
 
 def printProgress (iteration, total, prefix = '', suffix = '', decimals = 1, barLength = 100):
     """
@@ -377,90 +342,7 @@ def parallel_computing(ga_object):
     print("Completed")
 
 
-class AnimatedScatter(object):
-    """An animated scatter plot using matplotlib.animations.FuncAnimation."""
-    def __init__(self, g):
-        self.g=g
-        # Setup the figure and axes...
-        self.fig, self.ax = plt.subplots()
-        plt.ion()
-        # Then setup FuncAnimation.
-        self.ani = animation.FuncAnimation(self.fig, self.update, interval=10, 
-                                           init_func=self.setup_plot, blit=True)
-    
-    def sphere_plot(self,x,y):
-        return 20+((x**2-(10*np.cos(2*np.pi*x)))+(y**2-(10*np.cos(2*np.pi*y))))
-        
 
-
-    def setup_plot(self):
-        """Initial drawing of the scatter plot."""
-        x=np.array([self.g.population[i].dimensions[0] for i in range(self.g.pop_size)])
-        y=np.array([self.g.population[i].dimensions[1] for i in range(self.g.pop_size)])
-        x=(x-np.min(x))/(np.max(x)-np.min(x))
-        y=(y-np.min(y))/(np.max(y)-np.min(y))
-        self.scat = self.ax.scatter(x, y, animated=True)
-        self.prev_x=copy.deepcopy(x)
-        self.prev_y=copy.deepcopy(y)
-        self.prev2_x=copy.deepcopy(x)
-        self.prev2_y=copy.deepcopy(y)
-        self.ax.axis([0,1, 0,1])
-        # x=np.linspace(M_CONST[0], M_CONST[1])
-        # y=np.linspace(P_CONST[0], P_CONST[1])
-        # xv,yv=np.meshgrid(x,y)
-        # z=self.sphere_plot(xv,yv)
-        #self.ax.scatter(512,404.2319,marker='x')
-        # self.ax.imshow(z, cmap='autumn_r', interpolation='none',extent=[M_CONST[0], M_CONST[1], P_CONST[0], P_CONST[1]])
-
-        return self.scat,
-    
-    
-
-    def update(self, i):
-        """Update the scatter plot."""
-        x=np.array([self.g.population[i].dimensions[0] for i in range(self.g.pop_size)])
-        y=np.array([self.g.population[i].dimensions[1] for i in range(self.g.pop_size)])
-        xv=np.array([self.g.population[i].velocity[0] for i in range(self.g.pop_size)])
-        yv=np.array([self.g.population[i].velocity[1] for i in range(self.g.pop_size)])
-        
-        
-        if (self.prev_x==x).all():      
-            del_x=self.prev_x-self.prev2_x
-            del_y=self.prev_y-self.prev2_y
-            y=self.prev2_y+(0.001*del_y)
-            x=self.prev2_x+(0.001*del_x)
-            self.prev2_x=copy.deepcopy(x)
-            self.prev2_y=copy.deepcopy(y)
-            data=[x,y]
-            
-        else:
-            self.prev_x=copy.deepcopy(x)
-            self.prev_y=copy.deepcopy(y)
-            self.time_start=time.time()
-            del_x=self.prev_x-self.prev2_x
-            del_y=self.prev_y-self.prev2_y
-            y=self.prev2_y+(0.001*del_y)
-            x=self.prev2_x+(0.001*del_x)
-            self.prev2_x=copy.deepcopy(x)
-            self.prev2_y=copy.deepcopy(y)
-            data=[x,y]
-                 
-        self.scat.set_offsets(data)  
-        return self.scat,
-     
-    def plt_update(self):
-        plt.pause(5)
-
-    def show(self):
-        plt.show()
-        
-
-def update_plot(g):
-    a = AnimatedScatter(g)
-    a.show()
-    
-    while True:
-        a.plt_update()
         
 if __name__=='__main__':
     
