@@ -1,21 +1,34 @@
 import numpy as np
 
 """Constants"""
-ITER_TOLERANCE=0.01
+ITER_TOLERANCE=0.001
 ITER_LIMIT    =200
-cl           =np.ones(int(r/2))*cl_alpha*alpha_wing
-cl           =np.append(cl,0)       
-cl           =cl[::-1]
-c_b          =np.ones(int(r/2))*c/b
-c_b          =np.append(c_b,0)
-c_b          =c_b[::-1]
-#c            =c*np.ones((n+1)) 
+
+
+"""Non Linear LLT Code Based on NACA TN 1269
+b          =Wing span(m)
+c          =array of chord lengths (m) array length=r/2
+cl_alpha   =slopes for different reynolds nos
+alpha_wing =Operating angle
+alpha_0    =Zero-lift angle (array)
+A          =Aspect Ratio 
+r          =No of sections (same as k from NACA TN 1269)"""    
+
+#For testing
+# r=20
+# b=2
+# c=np.array([ 0.3   ,  0.2833,  0.2667,  0.25  ,  0.2333,  0.2167,  0.2   ,
+        # 0.1833,  0.1667,  0.15  ])
+# alpha_wing=3
+# alpha_0=np.array([-1.8209, -1.7901, -1.7593, -1.7285, -1.6977, -1.6669 ,-1.6361 ,-1.6053, -1.5746, -1.5438])
+# A=b**2/(b*0.233)
+# cl_alpha=np.array([ 0.1061,  0.107 ,  0.1079,  0.1088,  0.1096,  0.1105 , 0.1114 , 0.1123 , 0.1132,  0.114 ])
 def pad_arrays(arr):
     arr=np.append(arr,0)
     arr=arr[::-1]
     return arr
 
-def get_eta_m(m):
+def get_eta_m(m,r):
         eta_m=(np.pi/(2*r))*np.sin(m*np.pi/r)
         if (m==int(r/2)):
             eta_ms=eta_m
@@ -23,7 +36,7 @@ def get_eta_m(m):
             eta_ms=2*eta_m
         return eta_ms
         
-def get_lambda_mk(m,k):
+def get_lambda_mk(m,k,r):
     if (k+m)%2!=0:
         if m==int(r/2):
             lambda_mk=-180/(np.pi*r*((np.cos(2*k*np.pi/r)+1)))
@@ -39,45 +52,40 @@ def get_lambda_mk(m,k):
         lambda_mk=0
     return lambda_mk
 
-"""Non Linear LLT Code Based on NACA TN 1269
-b          =Wing span(m)
-c          =array of chord lengths (m) array length=r/2
-cl_alpha   =slopes for different reynolds nos
-alpha_wing =Operating angle
-alpha_0    =Zero-lift angle (array)
-A          =Aspect Ratio 
-r          =No of sections (same as k from NACA TN 1269)"""    
     
-def nonlinear_llt(b,c,cl_alpha,alpha_wing,r,A,alpha_0):
-    c_b=np.ones(int(r/2))*c/b
-    cl=np.ones(int(r/2))*cl_alpha*alpha_wing
-    cl=pad_arrays(cl)
+def LLT(b,c,cl_alpha,alpha_wing,r,A,alpha_0):
+    c_b=c/b
     c_b=pad_arrays(c_b)
+    alpha_0=pad_arrays(alpha_0)
+    cl_alpha=pad_arrays(cl_alpha)
+    cl=cl_alpha*alpha_wing
     cl_c_b =cl*c_b
     for iter in range(ITER_LIMIT):
         alpha_i=np.array([])   
         for k in range (int(r/2),0,-1):
             alpha_i_temp=0
             for m in np.arange(int(r/2),0,-1):
-                lambda_mk=get_lambda_mk(m,k)
+                lambda_mk=get_lambda_mk(m,k,r)
                 alpha_i_temp+=cl_c_b[m]*lambda_mk
             alpha_i=np.append(alpha_i,alpha_i_temp)        
         alpha_eff=alpha_wing-alpha_i
         alpha_eff=pad_arrays(alpha_eff)
-        cl=cl_alpha*(alpha_eff-foil_alpha_0)
+        alpha_eff-=alpha_0
+        cl=cl_alpha*(alpha_eff)
         cl_c_b_new=cl*(c_b)
         if (np.fabs(np.sum(cl_c_b_new-cl_c_b))<ITER_TOLERANCE):
-            print(iter)
+            #print(iter)
             break
         else:
             cl_c_b=cl_c_b+0.05*(cl_c_b_new-cl_c_b)
     CL=0
     CD_i=0
     for m in range(int(r/2),0,-1):
-        CL+=cl_c_b[m]*get_eta_m(m)
-        CD_i+=cl_c_b[m]*alpha_eff[m]*get_eta_m(m)
+        CL+=cl_c_b[m]*get_eta_m(m,r)
+        CD_i+=cl_c_b[m]*alpha_eff[m]*get_eta_m(m,r)
     CL=A*CL
     CD_i=(np.pi/180)*A*CD_i
-    print("CL:" +str(CL))
-    print("CD_i: "+str(CD_i))
+    #print("CL:" +str(CL))
+    #print("CD_i: "+str(CD_i))
+    return CL,CD_i
 
