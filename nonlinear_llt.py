@@ -1,8 +1,8 @@
 import numpy as np
 
 """Constants"""
-ITER_TOLERANCE=0.001
-ITER_LIMIT    =200
+ITER_TOLERANCE=0.0001
+ITER_LIMIT    =300
 
 
 """Non Linear LLT Code Based on NACA TN 1269
@@ -53,13 +53,17 @@ def get_lambda_mk(m,k,r):
     return lambda_mk
 
     
-def LLT(b,c,cl_alpha,alpha_wing,r,A,alpha_0):
-    c_b=c/b
-    c_b=pad_arrays(c_b)
+def LLT(b,c,cl_alpha,alpha_wing,r,wing_area,alpha_0,cd_0,cd_coeff):
+    
+    
+    c=pad_arrays(c)
     alpha_0=pad_arrays(alpha_0)
     cl_alpha=pad_arrays(cl_alpha)
+    cd_0=pad_arrays(cd_0)
     cl=cl_alpha*alpha_wing
+    c_b=c/b
     cl_c_b =cl*c_b
+    A=(b**2)/wing_area
     for iter in range(ITER_LIMIT):
         alpha_i=np.array([])   
         for k in range (int(r/2),0,-1):
@@ -72,20 +76,28 @@ def LLT(b,c,cl_alpha,alpha_wing,r,A,alpha_0):
         alpha_eff=pad_arrays(alpha_eff)
         alpha_eff-=alpha_0
         cl=cl_alpha*(alpha_eff)
+        cd=(cd_coeff[2]*cl**2)+(cd_coeff[1]*cl)+cd_0
         cl_c_b_new=cl*(c_b)
         if (np.fabs(np.sum(cl_c_b_new-cl_c_b))<ITER_TOLERANCE):
             #print(iter)
             break
         else:
-            cl_c_b=cl_c_b+0.05*(cl_c_b_new-cl_c_b)
+            cl_c_b=cl_c_b+0.01*(cl_c_b_new-cl_c_b)
     CL=0
     CD_i=0
+    CD_0=0
+    c_bar=wing_area/b
+    cd_c_cbar=cd*c/c_bar
+    alpha_i=pad_arrays(alpha_i)
     for m in range(int(r/2),0,-1):
         CL+=cl_c_b[m]*get_eta_m(m,r)
-        CD_i+=cl_c_b[m]*alpha_eff[m]*get_eta_m(m,r)
+        CD_i+=cl_c_b[m]*alpha_i[m]*get_eta_m(m,r)
+        CD_0+=cd_c_cbar[m]*get_eta_m(m,r)
     CL=A*CL
     CD_i=(np.pi/180)*A*CD_i
-    #print("CL:" +str(CL))
-    #print("CD_i: "+str(CD_i))
-    return CL,CD_i
+    CD=np.fabs(CD_i)+CD_0
+    # print("CL:" +str(CL))
+    # print("CD_i: "+str(CD_i))
+    # print("CD_0 "+str(CD_0))
+    return CL,CD
 
