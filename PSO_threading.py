@@ -9,11 +9,13 @@ import operator
 import subprocess as sp
 import threading
 import queue
-import time
+import time,datetime
 import psutil
 import sys
 import nonlinear_llt
 import naca_airfoil_gen
+
+# is it possible to include taper position ? 
 
 os.chdir(r'C:\Users\Aniru_000\Desktop\TD-1\Airfoil\s1223\airfoil\Python Code\tempfiles')
 np.set_printoptions(precision=4)
@@ -55,7 +57,7 @@ XFOIL_LOWER_BOUND=-5
 
 CHROMOSOME_SIZE=8
 MAX_ITER=10
-POP_SIZE=50
+POP_SIZE=1
 
 NUM_THREADS=2
 THREAD_LIST=[]
@@ -223,12 +225,12 @@ def fitness_function(individual,thread_name):
     AR_wing=(b_wing**2)/wing_area
     y=np.linspace(0,b_wing/2,int(R_LLT/2))
     c_wing=((2*wing_area)/(b_wing*(1+taper_wing)))*(1-(2*np.fabs(y)-(2*np.fabs(y)*taper_wing))/b_wing)
-    reynolds_no=np.array([0,0,0])                   #Calculate Reynolds no for root, b/4 and tip
-    reynolds_no[0]=(OPERATING_VELOCITY*c_wing[0])/KINEMATIC_VISCOSITY
-    reynolds_no[1]=(OPERATING_VELOCITY*c_wing[int(len(c_wing)/2)])/KINEMATIC_VISCOSITY
-    reynolds_no[2]=(OPERATING_VELOCITY*c_wing[-1])/KINEMATIC_VISCOSITY
+    reynolds_no_iter=np.array([0,0,0])                   #Calculate Reynolds no for root, b/4 and tip
+    reynolds_no_iter[0]=(OPERATING_VELOCITY*c_wing[0])/KINEMATIC_VISCOSITY
+    reynolds_no_iter[1]=(OPERATING_VELOCITY*c_wing[int(len(c_wing)/2)])/KINEMATIC_VISCOSITY
+    reynolds_no_iter[2]=(OPERATING_VELOCITY*c_wing[-1])/KINEMATIC_VISCOSITY
     
-    reynolds_no_iter=copy.deepcopy(reynolds_no)
+    reynolds_no=np.array([])
     exit_counter=0
     cl_alpha=np.array([])
     cd_0_cl=np.array([])
@@ -239,14 +241,12 @@ def fitness_function(individual,thread_name):
         change_session_file(thread_name,reynolds_no_iter[re_iter],alpha_wing,id)
         errorCode=run_xfoil(thread_name,id)
         if errorCode is 1:
-            reynolds_no=np.delete(reynolds_no,re_iter)
             exit_counter+=1
         else:    
             cl_dict,cd_dict=read_output(thread_name,id)
             flag=0
             cl=np.array([])
             cd=np.array([])
-            
             alpha_airfoil=np.array([])
             for k in np.arange(XFOIL_LOWER_BOUND, alpha_wing+1,ALPHA_WING_STEP_SIZE):               #Check for exceptions   
                 try:
@@ -262,11 +262,11 @@ def fitness_function(individual,thread_name):
                 alpha_0=np.append(alpha_0,(-intercept/slope))
                 cd_coeff=np.polyfit(cl,cd,2)
                 cd_0_cl=np.append(cd_0_cl,cd_coeff[0])
+                reynolds_no=np.append(reynolds_no,reynolds_no_iter[re_iter])
             else:
-                reynolds_no=np.delete(reynolds_no,re_iter)
                 exit_counter+=1
         os.remove('output_'+str(thread_name)+'_'+str(id)+'.txt')        
-    if len(cl_alpha)>1:
+    if len(cl_alpha)>1:                 #exit counter here check
         cl_re_slope,cl_re_intercept=np.polyfit(reynolds_no,cl_alpha,1)
         alpha_re_slope,alpha_re_intercept=np.polyfit(reynolds_no,alpha_0,1)
         cd_0_re_slope,cd_0_re_intercept=np.polyfit(reynolds_no,cd_0_cl,1)
@@ -281,7 +281,7 @@ def fitness_function(individual,thread_name):
             alpha_0_section=np.append(alpha_0_section,temp_alpha_0)
             temp_cd_0_cl=cd_0_re_slope*temp_re+cd_0_re_intercept
             cd_0_section=np.append(cd_0_section,temp_cd_0_cl)
-    else:
+    elif len(cl_alpha)==1:
         cl_alpha_section=np.array([])
         alpha_0_section=np.array([])
         cd_0_section=np.array([])
@@ -289,6 +289,9 @@ def fitness_function(individual,thread_name):
             cl_alpha_section=np.append(cl_alpha_section,cl_alpha[0])
             alpha_0_section=np.append(alpha_0_section,alpha_0[0])
             cd_0_section=np.append(cd_0_section,cd_0_cl[0])
+    else:
+        return np.inf
+        
     if exit_counter<3:
         CL_wing,CD_wing=nonlinear_llt.LLT(b_wing,c_wing,cl_alpha_section,alpha_wing,R_LLT,wing_area,alpha_0_section,cd_0_section,cd_coeff)
         #print(CL_wing)
@@ -380,13 +383,20 @@ if __name__=='__main__':
         g.evaluatepopulation()
         g.update_individuals()  
         g.population.sort(key=operator.attrgetter('fitness'))
-        print(np.array([g.population[i].fitness for i in range(10)]))
+        print(np.array([g.population[i].fitness for i in range(int(g.pop_size*0.2))]))
         g.halloffame(g.population[0])
         g.update_vector()
 
         print("Generation No: " +str(iter))
         print("Best Fitness : %0.3f" %(g.best.fitness))
         print("Execution Time: %0.3fs" %(time.time()-time_start))
+        with open("results_"+str(datetime.datetime.now())[0:10]+".txt", "a") as myfile:
+            myfile.write("Generation No: %s \n" %(iter))
+            myfile.write("Best Fitness : %0.3f \n" %(g.best.fitness))
+            myfile.write("%s \n" %(str(g.best.dimensions)))
+            myfile.write("Global Best: %s\n"%(str(g.gbest.fitness)))
+            myfile.write("%s \n" %(str(g.gbest.dimensions)))
+            myfile.write("\n")
     fitness_function(g.gbest,"Optimized")
     print("Program Execution Time: %0.3fs" %(time.time()-program_start))
     print("Best Individual:" )

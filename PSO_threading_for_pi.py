@@ -10,6 +10,7 @@ import subprocess as sp
 import threading
 import queue
 import time
+import datetime
 import psutil
 import sys
 import nonlinear_llt
@@ -228,7 +229,7 @@ def fitness_function(individual,thread_name):
     reynolds_no[1]=(OPERATING_VELOCITY*c_wing[int(len(c_wing)/2)])/KINEMATIC_VISCOSITY
     reynolds_no[2]=(OPERATING_VELOCITY*c_wing[-1])/KINEMATIC_VISCOSITY
     
-    reynolds_no_iter=copy.deepcopy(reynolds_no)
+    reynolds_no_actual=np.array([])
     exit_counter=0
     cl_alpha=np.array([])
     cd_0_cl=np.array([])
@@ -239,7 +240,6 @@ def fitness_function(individual,thread_name):
         change_session_file(thread_name,reynolds_no_iter[re_iter],alpha_wing,id)
         errorCode=run_xfoil(thread_name,id)
         if errorCode is 1:
-            reynolds_no=np.delete(reynolds_no,re_iter)
             exit_counter+=1
         else:    
             cl_dict,cd_dict=read_output(thread_name,id)
@@ -262,8 +262,8 @@ def fitness_function(individual,thread_name):
                 alpha_0=np.append(alpha_0,(-intercept/slope))
                 cd_coeff=np.polyfit(cl,cd,2)
                 cd_0_cl=np.append(cd_0_cl,cd_coeff[0])
-            else:
-                reynolds_no=np.delete(reynolds_no,re_iter)
+                reynolds_no_iter=np.append(reynolds_no_iter,reynolds_no[re_iter])
+            else:                
                 exit_counter+=1
         os.remove('output_'+str(thread_name)+'_'+str(id)+'.txt')        
     if len(cl_alpha)>1:
@@ -281,7 +281,7 @@ def fitness_function(individual,thread_name):
             alpha_0_section=np.append(alpha_0_section,temp_alpha_0)
             temp_cd_0_cl=cd_0_re_slope*temp_re+cd_0_re_intercept
             cd_0_section=np.append(cd_0_section,temp_cd_0_cl)
-    else:
+    elif len(cl_alpha)==1:
         cl_alpha_section=np.array([])
         alpha_0_section=np.array([])
         cd_0_section=np.array([])
@@ -289,6 +289,9 @@ def fitness_function(individual,thread_name):
             cl_alpha_section=np.append(cl_alpha_section,cl_alpha[0])
             alpha_0_section=np.append(alpha_0_section,alpha_0[0])
             cd_0_section=np.append(cd_0_section,cd_0_cl[0])
+    else: 
+        return np.inf
+        
     if exit_counter<3:
         CL_wing,CD_wing=nonlinear_llt.LLT(b_wing,c_wing,cl_alpha_section,alpha_wing,R_LLT,wing_area,alpha_0_section,cd_0_section,cd_coeff)
         #print(CL_wing)
@@ -380,13 +383,21 @@ if __name__=='__main__':
         g.evaluatepopulation()
         g.update_individuals()  
         g.population.sort(key=operator.attrgetter('fitness'))
-        print(np.array([g.population[i].fitness for i in range(10)]))
+        print(np.array([g.population[i].fitness for i in range(int(g.pop_size*0.2))]))
         g.halloffame(g.population[0])
         g.update_vector()
 
         print("Generation No: " +str(iter))
         print("Best Fitness : %0.3f" %(g.best.fitness))
         print("Execution Time: %0.3fs" %(time.time()-time_start))
+        with open("results_"+str(datetime.datetime.now())[0:10]+".txt", "a") as myfile:
+            myfile.write("Generation No: %s \n" %(iter))
+            myfile.write("Best Fitness : %0.3f \n" %(g.best.fitness))
+            myfile.write("%s \n" %(str(g.best.dimensions)))
+            myfile.write("Global Best: %s\n"%(str(g.gbest.dimensions)))
+            myfile.write("\n")
+
+
     fitness_function(g.gbest,"Optimized")
     print("Program Execution Time: %0.3fs" %(time.time()-program_start))
     print("Best Individual:" )
