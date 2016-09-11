@@ -30,8 +30,8 @@ M_CONST=(0,0.04)
 P_CONST=(0.15,0.6)
 T_CONST=(0.075,0.2)
 A_CONST=(-15,15)
-B_WING_CONST=(0.5,2)
-C_WING_CONST=(0.2,0.35)
+B_WING_CONST=(0.5,1.8)
+C_WING_CONST=(0.2,0.33)
 ALPHA_WING_CONST=(0,3)
 TAPER_WING_CONST=(0.5,0.95)
 LIFT_TARGET_KGS=3.5
@@ -43,7 +43,7 @@ CONSTRAINTS=(M_CONST,P_CONST,T_CONST,A_CONST,B_WING_CONST,C_WING_CONST,ALPHA_WIN
 M_STEP_SIZE=0.001
 P_STEP_SIZE=0.005
 T_STEP_SIZE=0.001
-A_STEP_SIZE=0.25
+A_STEP_SIZE=0.5
 B_WING_STEP_SIZE=0.05
 C_WING_STEP_SIZE=0.05
 ALPHA_WING_STEP_SIZE=0.25
@@ -224,12 +224,12 @@ def fitness_function(individual,thread_name):
     AR_wing=(b_wing**2)/wing_area
     y=np.linspace(0,b_wing/2,int(R_LLT/2))
     c_wing=((2*wing_area)/(b_wing*(1+taper_wing)))*(1-(2*np.fabs(y)-(2*np.fabs(y)*taper_wing))/b_wing)
-    reynolds_no=np.array([0,0,0])                   #Calculate Reynolds no for root, b/4 and tip
-    reynolds_no[0]=(OPERATING_VELOCITY*c_wing[0])/KINEMATIC_VISCOSITY
-    reynolds_no[1]=(OPERATING_VELOCITY*c_wing[int(len(c_wing)/2)])/KINEMATIC_VISCOSITY
-    reynolds_no[2]=(OPERATING_VELOCITY*c_wing[-1])/KINEMATIC_VISCOSITY
+    reynolds_no_iter=np.array([0,0,0])                   #Calculate Reynolds no for root, b/4 and tip
+    reynolds_no_iter[0]=(OPERATING_VELOCITY*c_wing[0])/KINEMATIC_VISCOSITY
+    reynolds_no_iter[1]=(OPERATING_VELOCITY*c_wing[int(len(c_wing)/2)])/KINEMATIC_VISCOSITY
+    reynolds_no_iter[2]=(OPERATING_VELOCITY*c_wing[-1])/KINEMATIC_VISCOSITY
     
-    reynolds_no_actual=np.array([])
+    reynolds_no=np.array([])
     exit_counter=0
     cl_alpha=np.array([])
     cd_0_cl=np.array([])
@@ -262,7 +262,7 @@ def fitness_function(individual,thread_name):
                 alpha_0=np.append(alpha_0,(-intercept/slope))
                 cd_coeff=np.polyfit(cl,cd,2)
                 cd_0_cl=np.append(cd_0_cl,cd_coeff[0])
-                reynolds_no_iter=np.append(reynolds_no_iter,reynolds_no[re_iter])
+                reynolds_no=np.append(reynolds_no,reynolds_no_iter[re_iter])
             else:                
                 exit_counter+=1
         os.remove('output_'+str(thread_name)+'_'+str(id)+'.txt')        
@@ -291,7 +291,6 @@ def fitness_function(individual,thread_name):
             cd_0_section=np.append(cd_0_section,cd_0_cl[0])
     else: 
         return np.inf
-        
     if exit_counter<3:
         CL_wing,CD_wing=nonlinear_llt.LLT(b_wing,c_wing,cl_alpha_section,alpha_wing,R_LLT,wing_area,alpha_0_section,cd_0_section,cd_coeff)
         #print(CL_wing)
@@ -390,20 +389,15 @@ if __name__=='__main__':
         print("Generation No: " +str(iter))
         print("Best Fitness : %0.3f" %(g.best.fitness))
         print("Execution Time: %0.3fs" %(time.time()-time_start))
-        with open("results_"+str(datetime.datetime.now())[0:10]+".txt", "a") as myfile:
+        with open("results_.txt", "a") as myfile:
             myfile.write("Generation No: %s \n" %(iter))
             myfile.write("Best Fitness : %0.3f \n" %(g.best.fitness))
             myfile.write("%s \n" %(str(g.best.dimensions)))
-            myfile.write("Global Best: %s\n"%(str(g.gbest.dimensions)))
+            myfile.write("Global Best: %s\n"%(str(g.gbest.fitness)))
+            myfile.write("%s \n" %(str(g.gbest.dimensions)))
             myfile.write("\n")
-
-
     fitness_function(g.gbest,"Optimized")
     print("Program Execution Time: %0.3fs" %(time.time()-program_start))
     print("Best Individual:" )
     print(g.gbest.dimensions)
-    print(g.gbest.fitness)
-        
-        
-        
-        
+    print(g.gbest.fitness) 
